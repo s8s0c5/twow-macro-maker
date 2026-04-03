@@ -3,53 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SuperCleveRoid Macro Builder</title>
+  <title>Macro Builder – Turtle WoW</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="app">
     <header>
-      <h1>SuperCleveRoid Macro Builder</h1>
-      <p>Interactive macro builder for Turtle WoW</p>
+      <h1>Macro Builder</h1>
+      <p>for SuperCleveRoid &middot; Turtle WoW</p>
     </header>
 
-    <section id="carousel">
-      <div class="carousel-label">Example Macros</div>
-      <span class="carousel-class" id="ex-class"></span>
-      <div class="carousel-title" id="ex-title"></div>
-      <div class="carousel-desc" id="ex-desc"></div>
-      <div class="carousel-code" id="ex-code"></div>
-      <div class="carousel-controls">
-        <button class="btn-primary btn-small" id="btn-load">Load into Builder</button>
-        <button class="btn-secondary btn-small" id="btn-prev">&larr;</button>
-        <div class="carousel-dots" id="carousel-dots"></div>
-        <button class="btn-secondary btn-small" id="btn-next">&rarr;</button>
-      </div>
-    </section>
-
-    <section id="builder">
-      <h2>Builder</h2>
-      <div id="builder-lines"></div>
-      <button class="btn-secondary" id="btn-add-line">+ Add Line</button>
-    </section>
-
-    <section id="preview">
-      <div id="preview-header">
-        <h2 style="margin:0">Preview</h2>
-        <button class="btn-primary btn-small" id="btn-copy">Copy</button>
-      </div>
-      <div id="preview-text"></div>
-    </section>
-  </div>
-
-  <div id="picker-overlay"></div>
-  <div id="cond-picker" class="hidden">
-    <input type="text" id="cond-search" placeholder="Search conditionals...">
-    <div id="cond-tabs">
-      <button class="tab active" data-scope="player">Player</button>
-      <button class="tab" data-scope="target">Target</button>
+    <div class="example-float" id="example-float">
+      <div class="ex-desc" id="ex-desc"></div>
+      <div class="ex-code" id="ex-code"></div>
     </div>
-    <div id="cond-categories"></div>
+
+    <div id="wizard"></div>
+
+    <button class="add-action" id="btn-add">+ and also...</button>
+
+    <div class="macro-output" id="output">
+      <code id="output-text"></code>
+      <button class="copy-btn" id="btn-copy">copy</button>
+    </div>
   </div>
 
   <script src="conditionals.js"></script>

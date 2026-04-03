@@ -2,8 +2,7 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-
-function el(tag, attrs, ...children) {
+function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
   if (attrs) for (const [k, v] of Object.entries(attrs)) {
     if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
@@ -11,33 +10,33 @@ function el(tag, attrs, ...children) {
     else if (typeof v === 'boolean') { if (v) e.setAttribute(k, ''); }
     else e.setAttribute(k, String(v));
   }
-  for (const c of children.flat()) {
+  for (const c of kids.flat()) {
     if (typeof c === 'string') e.appendChild(document.createTextNode(c));
     else if (c instanceof Node) e.appendChild(c);
   }
   return e;
 }
-
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function fmtSpell(n) { return n.replace(/ /g, '_'); }
 function condDef(name) { return CONDITIONALS.find(c => c.name === name); }
+function cmdDef(cmd) { return COMMANDS.find(c => c.cmd === cmd); }
 
-// ============ STATE ============
+// =========== STATE ===========
 
-let lines = [];
-let carouselIdx = 0;
-let carouselTimer = null;
-let pickerLine = -1, pickerAlt = -1;
+let actions = [];
+let exIdx = 0;
+let exTimer = null;
 
-function createAlt() { return { target: '', conditions: [], spell: '', prefix: '' }; }
+function freshAction() {
+  return { command: '/cast', spell: '', target: '', conds: {}, fallback: '' };
+}
 
-function createCond(name) {
+function freshCond(name) {
   const def = condDef(name);
   const c = { name, negated: false };
   if (!def) return c;
   switch (def.type) {
     case 'boolean': break;
-    case 'comparison': c.operator = '>'; c.value = ''; break;
+    case 'comparison': c.operator = '<'; c.value = ''; break;
     case 'value': c.value = ''; break;
     case 'spell': c.spell = ''; break;
     case 'spellComparison': c.spell = ''; c.operator = ''; c.value = ''; c.isStacks = false; break;
@@ -49,22 +48,18 @@ function createCond(name) {
   return c;
 }
 
-// ============ SERIALIZE ============
+// =========== SERIALIZE ===========
 
 function serializeCond(cond) {
   const def = condDef(cond.name);
   const pre = cond.negated ? 'no' : '';
   const n = pre + cond.name;
   if (!def) return cond.value ? n + ':' + cond.value : n;
-
   switch (def.type) {
     case 'boolean': return n;
-    case 'comparison':
-      return cond.value ? n + ':' + (cond.operator || '>') + cond.value : n;
-    case 'value':
-      return cond.value ? n + ':' + cond.value : n;
-    case 'spell':
-      return cond.spell ? n + ':' + fmtSpell(cond.spell) : n;
+    case 'comparison': return cond.value ? n + ':' + (cond.operator || '<') + cond.value : n;
+    case 'value': return cond.value ? n + ':' + cond.value : n;
+    case 'spell': return cond.spell ? n + ':' + fmtSpell(cond.spell) : n;
     case 'spellComparison': {
       if (!cond.spell) return n;
       let s = n + ':' + fmtSpell(cond.spell);
@@ -93,545 +88,377 @@ function serializeCond(cond) {
       return cond.value ? n + ':' + (cond.operator || '<') + cond.value : n;
     }
     case 'stat':
-      return (cond.statType && cond.value)
-        ? n + ':' + cond.statType + (cond.operator || '>') + cond.value
-        : n;
+      return (cond.statType && cond.value) ? n + ':' + cond.statType + (cond.operator || '>') + cond.value : n;
     default: return n;
   }
 }
 
-function serializeLine(line) {
-  const cmd = line.command;
-  if (!line.alternatives || line.alternatives.length === 0) return cmd;
-  const alts = line.alternatives;
-  const parts = alts.map(alt => {
-    const cp = [];
-    if (alt.target) cp.push(alt.target);
-    alt.conditions.forEach(c => cp.push(serializeCond(c)));
-    let t = '';
-    if (cp.length > 0) t = '[' + cp.join(',') + '] ';
-    t += (alt.prefix || '') + alt.spell;
-    return t;
-  });
-  const body = parts.join('; ').trim();
-  return body ? cmd + ' ' + body : cmd;
+function serializeAction(a) {
+  const condList = Object.values(a.conds);
+  const cp = [];
+  if (a.target) cp.push(a.target);
+  condList.forEach(c => cp.push(serializeCond(c)));
+  let line = a.command;
+  let alt1 = '';
+  if (cp.length > 0) alt1 = '[' + cp.join(',') + '] ';
+  alt1 += a.spell;
+  if (a.fallback) alt1 += '; ' + a.fallback;
+  const body = alt1.trim();
+  return body ? line + ' ' + body : line;
 }
 
-function serializeAll() { return lines.map(serializeLine).join('\n'); }
+function serializeAll() { return actions.map(serializeAction).join('\n'); }
 
-// ============ PARSER ============
+// =========== PARSER ===========
 
 function parseMacro(text) {
   return text.split('\n').filter(l => l.trim()).map(parseLineStr);
 }
-
 function parseLineStr(text) {
   const m = text.match(/^(\/\w+|#\w+)\s*(.*)/);
-  if (!m) return { command: text.trim(), alternatives: [createAlt()] };
-  const command = m[1];
+  if (!m) return { command: text.trim(), alternatives: [] };
   const rest = m[2].trim();
-  if (!rest) return { command, alternatives: [createAlt()] };
-  const altStrs = splitOutsideBrackets(rest, ';');
-  return { command, alternatives: altStrs.map(parseAltStr) };
+  if (!rest) return { command: m[1], alternatives: [] };
+  return { command: m[1], alternatives: splitSemi(rest).map(parseAltStr) };
 }
-
-function splitOutsideBrackets(str, sep) {
-  const parts = []; let cur = ''; let depth = 0;
-  for (const ch of str) {
-    if (ch === '[') depth++;
-    if (ch === ']') depth--;
-    if (ch === sep && depth === 0) { parts.push(cur.trim()); cur = ''; }
-    else cur += ch;
-  }
+function splitSemi(str) {
+  const parts = []; let cur = ''; let d = 0;
+  for (const ch of str) { if (ch === '[') d++; if (ch === ']') d--; if (ch === ';' && d === 0) { parts.push(cur.trim()); cur = ''; } else cur += ch; }
   if (cur.trim()) parts.push(cur.trim());
   return parts;
 }
-
 function parseAltStr(text) {
   let target = '', conditions = [], spell = text, prefix = '';
   const bm = text.match(/^\[(.*?)\]\s*(.*)/);
   if (bm) {
-    const condStr = bm[1];
     spell = bm[2].trim();
-    condStr.split(',').forEach(p => {
-      p = p.trim();
-      if (!p) return;
-      if (p.startsWith('@')) { target = p; return; }
-      conditions.push(parseCondStr(p));
-    });
+    bm[1].split(',').forEach(p => { p = p.trim(); if (!p) return; if (p.startsWith('@')) { target = p; } else { conditions.push(parseCondStr(p)); } });
   }
   if (spell && '!?~'.includes(spell[0])) { prefix = spell[0]; spell = spell.substring(1); }
   return { target, conditions, spell, prefix };
 }
-
 function parseCondStr(str) {
-  const colonIdx = str.indexOf(':');
-  let name = colonIdx >= 0 ? str.substring(0, colonIdx) : str;
-  let paramStr = colonIdx >= 0 ? str.substring(colonIdx + 1) : '';
-  let negated = false;
-
-  let def = condDef(name);
-  if (!def && name.startsWith('no')) {
-    const stripped = name.substring(2);
-    const d2 = condDef(stripped);
-    if (d2 && d2.negatable) { negated = true; name = stripped; def = d2; }
-  }
-  if (!def) return { name, negated: false, value: paramStr };
-
-  const c = { name, negated };
+  const ci = str.indexOf(':');
+  let name = ci >= 0 ? str.substring(0, ci) : str;
+  let ps = ci >= 0 ? str.substring(ci + 1) : '';
+  let neg = false, def = condDef(name);
+  if (!def && name.startsWith('no')) { const s = name.substring(2); const d2 = condDef(s); if (d2 && d2.negatable) { neg = true; name = s; def = d2; } }
+  if (!def) return { name, negated: false, value: ps };
+  const c = { name, negated: neg };
   switch (def.type) {
     case 'boolean': break;
-    case 'comparison': {
-      const m = paramStr.match(/^([><=~!]+)(.+)/);
-      if (m) { c.operator = m[1]; c.value = m[2]; }
-      else { c.operator = '>'; c.value = ''; }
-      break;
-    }
-    case 'value': c.value = paramStr; break;
-    case 'spell': c.spell = paramStr.replace(/_/g, ' '); break;
-    case 'spellComparison': {
-      const sm = paramStr.match(/^(.+?)([<>=~!]+)(#?)(\d+(?:\.\d+)?)$/);
-      if (sm) { c.spell = sm[1].replace(/_/g, ' '); c.operator = sm[2]; c.isStacks = sm[3] === '#'; c.value = sm[4]; }
-      else { c.spell = paramStr.replace(/_/g, ' '); c.operator = ''; c.value = ''; c.isStacks = false; }
-      break;
-    }
-    case 'countMode': {
-      const cm = paramStr.match(/^(?:([a-zA-Z]+))?([><=~!]+)(\d+)$/);
-      if (cm) { c.filter = cm[1] || ''; c.operator = cm[2]; c.value = cm[3]; }
-      else { c.operator = '>'; c.value = ''; c.filter = ''; }
-      break;
-    }
-    case 'spellCount': {
-      const sm2 = paramStr.match(/^(.+?)([><=~!]+)(\d+)$/);
-      if (sm2) { c.spell = sm2[1].replace(/_/g, ' '); c.operator = sm2[2]; c.value = sm2[3]; }
-      else { c.spell = paramStr.replace(/_/g, ' '); c.operator = '>'; c.value = ''; }
-      break;
-    }
-    case 'distanceCount': {
-      const dm = paramStr.match(/^(\d+)(?::([a-zA-Z]+))?([><=~!]+)(\d+)$/);
-      if (dm) { c.distance = dm[1]; c.filter = dm[2] || ''; c.operator = dm[3]; c.value = dm[4]; }
-      else {
-        const dm2 = paramStr.match(/^([><=~!]+)(\d+)$/);
-        if (dm2) { c.distance = ''; c.operator = dm2[1]; c.value = dm2[2]; c.filter = ''; }
-        else { c.distance = paramStr; c.operator = '>'; c.value = ''; c.filter = ''; }
-      }
-      break;
-    }
-    case 'stat': {
-      const stm = paramStr.match(/^(\w+?)([><=~!]+)(.+)/);
-      if (stm) { c.statType = stm[1]; c.operator = stm[2]; c.value = stm[3]; }
-      else { c.statType = ''; c.operator = '>'; c.value = ''; }
-      break;
-    }
+    case 'comparison': { const m = ps.match(/^([><=~!]+)(.+)/); if (m) { c.operator = m[1]; c.value = m[2]; } else { c.operator = '<'; c.value = ''; } break; }
+    case 'value': c.value = ps; break;
+    case 'spell': c.spell = ps.replace(/_/g, ' '); break;
+    case 'spellComparison': { const m = ps.match(/^(.+?)([<>=~!]+)(#?)(\d+(?:\.\d+)?)$/); if (m) { c.spell = m[1].replace(/_/g, ' '); c.operator = m[2]; c.isStacks = m[3] === '#'; c.value = m[4]; } else { c.spell = ps.replace(/_/g, ' '); c.operator = ''; c.value = ''; c.isStacks = false; } break; }
+    case 'countMode': { const m = ps.match(/^(?:([a-zA-Z]+))?([><=~!]+)(\d+)$/); if (m) { c.filter = m[1] || ''; c.operator = m[2]; c.value = m[3]; } else { c.operator = '>'; c.value = ''; c.filter = ''; } break; }
+    case 'spellCount': { const m = ps.match(/^(.+?)([><=~!]+)(\d+)$/); if (m) { c.spell = m[1].replace(/_/g, ' '); c.operator = m[2]; c.value = m[3]; } else { c.spell = ps.replace(/_/g, ' '); c.operator = '>'; c.value = ''; } break; }
+    case 'distanceCount': { const m = ps.match(/^(\d+)(?::([a-zA-Z]+))?([><=~!]+)(\d+)$/); if (m) { c.distance = m[1]; c.filter = m[2]||''; c.operator = m[3]; c.value = m[4]; } else { const m2 = ps.match(/^([><=~!]+)(\d+)$/); if (m2) { c.distance = ''; c.operator = m2[1]; c.value = m2[2]; c.filter = ''; } else { c.distance = ps; c.operator = '>'; c.value = ''; c.filter = ''; } } break; }
+    case 'stat': { const m = ps.match(/^(\w+?)([><=~!]+)(.+)/); if (m) { c.statType = m[1]; c.operator = m[2]; c.value = m[3]; } else { c.statType = ''; c.operator = '>'; c.value = ''; } break; }
   }
   return c;
 }
 
-// ============ PREVIEW ============
-
-function renderPreview() {
-  const text = serializeAll();
-  $('preview-text').innerHTML = highlightMacro(text);
-}
-
-function highlightMacro(text) {
-  if (!text.trim()) return '<span style="opacity:0.4">Add lines above to build your macro</span>';
-  let html = '';
-  for (const line of text.split('\n')) {
-    if (html) html += '\n';
-    let i = 0;
-    const cm = line.match(/^(\/\w+|#\w+)/);
-    if (cm) { html += '<span class="cmd">' + esc(cm[1]) + '</span>'; i = cm[1].length; }
-    while (i < line.length) {
-      if (line[i] === '[') {
-        let j = line.indexOf(']', i);
-        if (j === -1) j = line.length - 1;
-        html += '<span class="cond">' + esc(line.substring(i, j + 1)) + '</span>';
-        i = j + 1;
-      } else if (line[i] === ';') {
-        html += '<span class="cmd">;</span>';
-        i++;
-      } else {
-        html += esc(line[i]);
-        i++;
-      }
-    }
+function lineToAction(line) {
+  const a = freshAction();
+  a.command = line.command;
+  if (line.alternatives && line.alternatives.length > 0) {
+    const alt = line.alternatives[0];
+    a.spell = alt.spell; a.target = alt.target;
+    alt.conditions.forEach(c => { a.conds[c.name] = c; });
+    if (line.alternatives.length > 1) a.fallback = line.alternatives[1].spell;
   }
-  return html;
+  return a;
 }
 
-// ============ BUILDER ============
+// =========== RENDER WIZARD ===========
 
-function renderBuilder() {
-  const container = $('builder-lines');
-  container.innerHTML = '';
-  lines.forEach((line, li) => container.appendChild(makeLineEl(line, li)));
-  renderPreview();
+let expandedMore = {};
+
+function renderWizard() {
+  const w = $('wizard');
+  w.innerHTML = '';
+  actions.forEach((a, i) => w.appendChild(renderAction(a, i)));
+  renderOutput();
 }
 
-function makeLineEl(line, li) {
-  const cmdSel = el('select', { class: 'cmd-select' });
-  SLASH_COMMANDS.forEach(sc => {
-    const opt = el('option', { value: sc.cmd }, sc.cmd);
-    if (sc.cmd === line.command) opt.selected = true;
-    cmdSel.appendChild(opt);
-  });
-  cmdSel.onchange = () => { line.command = cmdSel.value; renderPreview(); };
+function renderAction(a, idx) {
+  const cd = cmdDef(a.command);
+  const block = el('div', { class: 'action-block' });
 
-  const removeBtn = el('button', { class: 'btn-icon', title: 'Remove line', onclick: () => { lines.splice(li, 1); renderBuilder(); } }, '\u00d7');
+  // Header
+  const hdr = el('div', { class: 'action-num' });
+  hdr.appendChild(el('span', {}, actions.length > 1 ? 'Action ' + (idx + 1) : ''));
+  if (actions.length > 1) {
+    hdr.appendChild(el('button', { class: 'remove-action', onclick: () => { actions.splice(idx, 1); renderWizard(); } }, '\u00d7 remove'));
+  }
+  block.appendChild(hdr);
 
-  const header = el('div', { class: 'line-header' },
-    el('span', { class: 'line-num' }, String(li + 1)),
-    cmdSel, removeBtn
-  );
+  // Step 1: Command
+  const commonCmds = COMMANDS.filter(c => c.common);
+  const moreCmds = COMMANDS.filter(c => !c.common);
+  const cmdOpts = el('div', { class: 'step-options' });
+  const renderCmdBtn = (c) => {
+    const btn = el('button', {
+      class: 'option' + (a.command === c.cmd ? ' selected' : ''),
+      title: c.cmd,
+      onclick: () => { a.command = c.cmd; renderWizard(); }
+    }, c.human);
+    return btn;
+  };
+  commonCmds.forEach(c => cmdOpts.appendChild(renderCmdBtn(c)));
 
-  const altsContainer = el('div', {});
-  line.alternatives.forEach((alt, ai) => altsContainer.appendChild(makeAltEl(alt, li, ai, line.alternatives.length)));
+  const moreKey = 'cmd_' + idx;
+  if (expandedMore[moreKey]) {
+    moreCmds.forEach(c => cmdOpts.appendChild(renderCmdBtn(c)));
+  } else if (moreCmds.length) {
+    cmdOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKey] = true; renderWizard(); } }, 'more...'));
+  }
+  block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, 'I want to'), cmdOpts));
 
-  const addAltBtn = el('button', { class: 'btn-secondary btn-small', onclick: () => {
-    line.alternatives.push(createAlt());
-    renderBuilder();
-  }}, '+ Alternative (;)');
-
-  return el('div', { class: 'builder-line' }, header, altsContainer, el('div', { class: 'line-footer' }, addAltBtn));
-}
-
-function makeAltEl(alt, li, ai, altCount) {
-  const showLabel = altCount > 1;
-  const targetSel = el('select', { class: 'target-select' });
-  TARGET_UNITS.forEach(u => {
-    const opt = el('option', { value: u.value }, u.label);
-    if (u.value === alt.target) opt.selected = true;
-    targetSel.appendChild(opt);
-  });
-  targetSel.onchange = () => { alt.target = targetSel.value; renderPreview(); };
-
-  const condsList = el('div', { class: 'conditions-list' });
-  alt.conditions.forEach((cond, ci) => condsList.appendChild(makeCondPill(cond, li, ai, ci)));
-
-  const addCondBtn = el('button', { class: 'btn-secondary btn-small', onclick: (e) => {
-    showPicker(e.target, li, ai);
-  }}, '+ Condition');
-
-  const spellIn = el('input', { type: 'text', class: 'spell-input', value: alt.spell || '', placeholder: 'Spell / item name' });
-  spellIn.oninput = () => { alt.spell = spellIn.value; renderPreview(); };
-
-  const parts = [];
-  if (showLabel) {
-    const rmBtn = el('button', { class: 'btn-icon btn-small', title: 'Remove alternative', onclick: () => {
-      lines[li].alternatives.splice(ai, 1);
-      if (lines[li].alternatives.length === 0) lines[li].alternatives.push(createAlt());
-      renderBuilder();
-    }}, '\u00d7');
-    parts.push(el('div', { class: 'alt-header' },
-      el('span', { class: 'alt-label' }, 'Alt ' + (ai + 1)),
-      targetSel, rmBtn
-    ));
-  } else {
-    parts.push(el('div', { class: 'alt-header' }, targetSel));
+  // Step 2: Spell
+  if (cd && cd.hasSpell) {
+    const inp = el('input', { type: 'text', class: 'spell-field', value: a.spell || '', placeholder: 'spell or item name' });
+    inp.oninput = () => { a.spell = inp.value; renderOutput(); };
+    block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, 'The spell is'), inp));
   }
 
-  parts.push(condsList);
-  parts.push(el('div', { class: 'alt-actions' }, addCondBtn));
-  parts.push(el('div', { class: 'spell-row' }, spellIn));
+  // Step 3: Target
+  const commonTargets = TARGETS.slice(0, 5);
+  const moreTargets = TARGETS.slice(5);
+  const tgtOpts = el('div', { class: 'step-options' });
+  const renderTgtBtn = (t) => {
+    return el('button', {
+      class: 'option' + (a.target === t.value ? ' selected' : ''),
+      title: t.syntax || t.value,
+      onclick: () => { a.target = t.value; renderWizard(); }
+    }, t.human);
+  };
+  commonTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
+  const moreKeyT = 'tgt_' + idx;
+  if (expandedMore[moreKeyT]) {
+    moreTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
+  } else if (moreTargets.length) {
+    tgtOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKeyT] = true; renderWizard(); } }, 'more...'));
+  }
+  block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, cd && cd.hasSpell ? 'Cast it on' : 'Apply to'), tgtOpts));
 
-  return el('div', { class: 'alt-block' }, ...parts);
+  // Step 4: Conditions
+  const condStep = el('div', { class: 'step' });
+  condStep.appendChild(el('span', { class: 'step-label' }, 'But only when'));
+  condStep.appendChild(renderCondSection(a, idx, 'player', 'About me'));
+  condStep.appendChild(renderCondSection(a, idx, 'target', 'About my target'));
+  block.appendChild(condStep);
+
+  // Step 5: Fallback
+  const fbStep = el('div', { class: 'step' });
+  fbStep.appendChild(el('span', { class: 'step-label' }, 'Otherwise'));
+  const fbRow = el('div', { class: 'fallback-row' });
+  const nothingBtn = el('button', {
+    class: 'option' + (!a.fallback ? ' selected' : ''),
+    onclick: () => { a.fallback = ''; renderWizard(); }
+  }, 'Do nothing');
+  fbRow.appendChild(nothingBtn);
+  fbRow.appendChild(document.createTextNode(' or cast '));
+  const fbInput = el('input', { type: 'text', class: 'spell-field', value: a.fallback || '', placeholder: 'spell name' });
+  fbInput.oninput = () => { a.fallback = fbInput.value; renderOutput(); };
+  fbInput.onfocus = () => { nothingBtn.classList.remove('selected'); };
+  fbRow.appendChild(fbInput);
+  fbRow.appendChild(document.createTextNode(' instead'));
+  fbStep.appendChild(fbRow);
+  block.appendChild(fbStep);
+
+  return block;
 }
 
-function makeCondPill(cond, li, ai, ci) {
-  const def = condDef(cond.name);
-  const typ = def ? def.type : 'value';
+function renderCondSection(a, idx, scope, label) {
+  const sec = el('div', { class: 'cond-section' });
+  sec.appendChild(el('div', { class: 'cond-section-label' }, label));
 
-  const negLabel = el('span', {
-    class: 'neg-label' + (cond.negated ? ' active' : ''),
-    title: 'Toggle negation (no prefix)',
-    onclick: () => {
-      if (def && !def.negatable) return;
-      cond.negated = !cond.negated;
-      renderBuilder();
-    }
-  }, 'no');
+  const commonNames = scope === 'player' ? COMMON_PLAYER : COMMON_TARGET;
+  const allConds = CONDITIONALS.filter(c => c.scope === scope);
+  const commonConds = allConds.filter(c => commonNames.includes(c.name));
+  const moreConds = allConds.filter(c => !commonNames.includes(c.name));
 
-  const nameSpan = el('span', { class: 'cond-name' }, cond.name);
+  const cards = el('div', { class: 'cond-cards' });
+  commonConds.forEach(def => cards.appendChild(renderCondCard(def, a, idx)));
 
-  const removeBtn = el('button', { class: 'btn-icon', onclick: () => {
-    lines[li].alternatives[ai].conditions.splice(ci, 1);
-    renderBuilder();
-  }}, '\u00d7');
+  const moreKey = scope + '_' + idx;
+  if (expandedMore[moreKey]) {
+    moreConds.forEach(def => cards.appendChild(renderCondCard(def, a, idx)));
+  } else if (moreConds.length) {
+    cards.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKey] = true; renderWizard(); } }, 'more options...'));
+  }
 
-  const paramEls = makeCondParams(cond, def);
-  const pill = el('div', { class: 'cond-pill', 'data-type': typ });
-  if (def && def.negatable) pill.appendChild(negLabel);
-  pill.appendChild(nameSpan);
-  paramEls.forEach(p => pill.appendChild(p));
-  pill.appendChild(removeBtn);
-  return pill;
+  sec.appendChild(cards);
+  return sec;
 }
 
-function makeCondParams(cond, def) {
-  if (!def) {
-    const inp = el('input', { type: 'text', value: cond.value || '', placeholder: 'value' });
-    inp.oninput = () => { cond.value = inp.value; renderPreview(); };
-    return [inp];
-  }
+function renderCondCard(def, action, actionIdx) {
+  const key = def.name;
+  const isActive = !!action.conds[key];
+  const cond = action.conds[key] || freshCond(def.name);
 
-  const ops = ['>', '<', '>=', '<=', '=', '~='];
+  const card = el('div', { class: 'cond-card' + (isActive ? ' active' : '') });
 
-  function opSelect(current, onChange) {
-    const s = el('select', { class: 'op-sel' });
-    ops.forEach(op => { const o = el('option', { value: op }, op); if (op === current) o.selected = true; s.appendChild(o); });
-    s.onchange = () => onChange(s.value);
-    return s;
-  }
+  const check = el('span', { class: 'cond-check' }, isActive ? '\u2713' : '');
 
-  function numInput(current, placeholder, onChange) {
-    const inp = el('input', { type: 'text', class: 'cond-val', value: current || '', placeholder: placeholder || 'val' });
-    inp.style.width = '48px';
-    inp.oninput = () => onChange(inp.value);
-    return inp;
-  }
+  const textEl = el('span', { class: 'cond-text' });
+  const template = cond.negated && def.humanNeg ? def.humanNeg : def.human;
+  renderTemplate(textEl, template, cond, def, () => renderOutput());
 
-  function textInput(current, placeholder, onChange, cls) {
-    const inp = el('input', { type: 'text', class: cls || 'spell-param', value: current || '', placeholder: placeholder || '' });
-    inp.oninput = () => onChange(inp.value);
-    return inp;
-  }
+  card.appendChild(check);
+  card.appendChild(textEl);
 
-  switch (def.type) {
-    case 'boolean': return [];
-
-    case 'comparison': return [
-      opSelect(cond.operator || '>', v => { cond.operator = v; renderPreview(); }),
-      numInput(cond.value, 'val', v => { cond.value = v; renderPreview(); })
-    ];
-
-    case 'value': {
-      const ph = def.options ? def.options.slice(0, 3).join(', ') + '...' : 'value';
-      return [textInput(cond.value, ph, v => { cond.value = v; renderPreview(); }, 'spell-param')];
-    }
-
-    case 'spell':
-      return [textInput(cond.spell, 'Spell name', v => { cond.spell = v; renderPreview(); })];
-
-    case 'spellComparison': {
-      const els = [textInput(cond.spell, 'Spell name', v => { cond.spell = v; renderPreview(); })];
-      const opSel = el('select', { class: 'op-sel' });
-      [['', '---'], ['<', '<'], ['>', '>'], ['<=', '<='], ['>=', '>=']].forEach(([val, lbl]) => {
-        const o = el('option', { value: val }, lbl);
-        if (val === (cond.operator || '')) o.selected = true;
-        opSel.appendChild(o);
-      });
-      opSel.onchange = () => { cond.operator = opSel.value; renderPreview(); };
-      els.push(opSel);
-      els.push(numInput(cond.value, 'sec/#', v => { cond.value = v; renderPreview(); }));
-      const stacksCb = el('input', { type: 'checkbox' });
-      stacksCb.checked = !!cond.isStacks;
-      stacksCb.onchange = () => { cond.isStacks = stacksCb.checked; renderPreview(); };
-      els.push(el('label', { class: 'stacks-label', title: 'Check stacks instead of time', style: 'font-size:0.72rem;cursor:pointer;color:var(--text-dim)' }, stacksCb, ' #'));
-      return els;
-    }
-
-    case 'countMode': {
-      const filterOpts = ['', ...(def.filters || [])];
-      const fSel = el('select', {});
-      filterOpts.forEach(f => { const o = el('option', { value: f }, f || 'no filter'); if (f === (cond.filter || '')) o.selected = true; fSel.appendChild(o); });
-      fSel.onchange = () => { cond.filter = fSel.value; renderPreview(); };
-      return [
-        fSel,
-        opSelect(cond.operator || '>', v => { cond.operator = v; renderPreview(); }),
-        numInput(cond.value, 'count', v => { cond.value = v; renderPreview(); })
-      ];
-    }
-
-    case 'spellCount': return [
-      textInput(cond.spell, 'Spell name', v => { cond.spell = v; renderPreview(); }),
-      opSelect(cond.operator || '>', v => { cond.operator = v; renderPreview(); }),
-      numInput(cond.value, 'count', v => { cond.value = v; renderPreview(); })
-    ];
-
-    case 'distanceCount': {
-      const filterOpts = ['', ...(def.filters || [])];
-      const fSel = el('select', {});
-      filterOpts.forEach(f => { const o = el('option', { value: f }, f || 'no filter'); if (f === (cond.filter || '')) o.selected = true; fSel.appendChild(o); });
-      fSel.onchange = () => { cond.filter = fSel.value; renderPreview(); };
-      return [
-        numInput(cond.distance, 'yards', v => { cond.distance = v; renderPreview(); }),
-        fSel,
-        opSelect(cond.operator || '>', v => { cond.operator = v; renderPreview(); }),
-        numInput(cond.value, 'count', v => { cond.value = v; renderPreview(); })
-      ];
-    }
-
-    case 'stat': {
-      const stSel = el('select', {});
-      (def.options || []).forEach(st => { const o = el('option', { value: st }, st); if (st === (cond.statType || '')) o.selected = true; stSel.appendChild(o); });
-      stSel.onchange = () => { cond.statType = stSel.value; renderPreview(); };
-      return [
-        stSel,
-        opSelect(cond.operator || '>', v => { cond.operator = v; renderPreview(); }),
-        numInput(cond.value, 'val', v => { cond.value = v; renderPreview(); })
-      ];
-    }
-
-    default: return [];
-  }
-}
-
-// ============ CONDITIONAL PICKER ============
-
-function showPicker(btn, li, ai) {
-  pickerLine = li; pickerAlt = ai;
-  const picker = $('cond-picker');
-  const overlay = $('picker-overlay');
-  picker.classList.remove('hidden');
-  overlay.classList.add('active');
-
-  const rect = btn.getBoundingClientRect();
-  picker.style.left = Math.min(rect.left, window.innerWidth - 400) + 'px';
-  picker.style.top = (rect.bottom + 4) + 'px';
-
-  const maxH = window.innerHeight - rect.bottom - 20;
-  picker.style.maxHeight = Math.max(200, maxH) + 'px';
-
-  $('cond-search').value = '';
-  $('cond-search').focus();
-
-  const tabs = $('cond-tabs').querySelectorAll('.tab');
-  tabs.forEach(t => t.classList.toggle('active', t.dataset.scope === 'player'));
-  renderPickerList('player', '');
-}
-
-function hidePicker() {
-  $('cond-picker').classList.add('hidden');
-  $('picker-overlay').classList.remove('active');
-  pickerLine = -1; pickerAlt = -1;
-}
-
-function renderPickerList(scope, query) {
-  const container = $('cond-categories');
-  container.innerHTML = '';
-  const q = query.toLowerCase();
-  const filtered = CONDITIONALS.filter(c =>
-    c.scope === scope && (
-      !q || c.name.includes(q) || c.desc.toLowerCase().includes(q) ||
-      c.cat.toLowerCase().includes(q)
-    )
-  );
-
-  const cats = {};
-  filtered.forEach(c => { (cats[c.cat] = cats[c.cat] || []).push(c); });
-
-  for (const [cat, items] of Object.entries(cats)) {
-    const catEl = el('div', { class: 'cond-category' },
-      el('div', { class: 'cond-cat-label' }, cat)
-    );
-    items.forEach(c => {
-      const item = el('div', { class: 'cond-item', onclick: () => {
-        if (pickerLine >= 0) {
-          lines[pickerLine].alternatives[pickerAlt].conditions.push(createCond(c.name));
-          hidePicker();
-          renderBuilder();
+  if (def.negatable && def.humanNeg) {
+    const negBtn = el('span', {
+      class: 'neg-toggle',
+      title: 'Toggle: ' + (cond.negated ? def.human : def.humanNeg),
+      onclick: (e) => {
+        e.stopPropagation();
+        if (isActive) {
+          action.conds[key].negated = !action.conds[key].negated;
+        } else {
+          const nc = freshCond(def.name);
+          nc.negated = true;
+          action.conds[key] = nc;
         }
-      }},
-        el('span', { class: 'cond-item-name' }, c.name),
-        el('span', { class: 'cond-item-desc' }, c.desc),
-        c.requires ? el('span', { class: 'cond-item-req' }, c.requires) : document.createTextNode('')
-      );
-      catEl.appendChild(item);
-    });
-    container.appendChild(catEl);
+        renderWizard();
+      }
+    }, cond.negated ? 'undo' : 'not');
+    card.appendChild(negBtn);
   }
 
-  if (Object.keys(cats).length === 0) {
-    container.appendChild(el('div', { style: 'padding:12px;color:var(--text-dim);text-align:center' }, 'No conditionals match'));
+  if (def.requires) {
+    card.appendChild(el('span', { class: 'cond-req', title: def.requires }, '\u26A0'));
   }
-}
 
-// ============ CAROUSEL ============
-
-function renderCarousel() {
-  const ex = EXAMPLES[carouselIdx];
-  $('ex-class').textContent = ex.cls;
-  $('ex-title').textContent = ex.title;
-  $('ex-desc').textContent = ex.desc;
-  $('ex-code').innerHTML = highlightMacro(ex.text);
-
-  const dots = $('carousel-dots');
-  dots.innerHTML = '';
-  EXAMPLES.forEach((_, i) => {
-    dots.appendChild(el('button', {
-      class: 'carousel-dot' + (i === carouselIdx ? ' active' : ''),
-      onclick: () => { carouselIdx = i; renderCarousel(); resetCarouselTimer(); }
-    }));
+  card.addEventListener('click', () => {
+    if (isActive) { delete action.conds[key]; }
+    else { action.conds[key] = freshCond(def.name); }
+    renderWizard();
   });
+
+  return card;
 }
 
-function nextExample(dir) {
-  carouselIdx = (carouselIdx + dir + EXAMPLES.length) % EXAMPLES.length;
-  renderCarousel();
-  resetCarouselTimer();
+function renderTemplate(container, template, cond, def, onUpdate) {
+  const ops = [['<','below'],['>','above'],['<=','at most'],['>=','at least'],['=','exactly']];
+  let i = 0;
+  while (i < template.length) {
+    if (template[i] === '{') {
+      const end = template.indexOf('}', i);
+      const key = template.substring(i + 1, end);
+      if (key === 'op') {
+        const sel = el('select', { class: 'inline-sel' });
+        ops.forEach(([v, l]) => { const o = el('option', { value: v }, l); if (v === (cond.operator || '<')) o.selected = true; sel.appendChild(o); });
+        sel.onchange = () => { cond.operator = sel.value; onUpdate(); };
+        sel.onclick = (e) => e.stopPropagation();
+        container.appendChild(sel);
+      } else if (key === 'value') {
+        if (def.options && def.options.length) {
+          const sel = el('select', { class: 'inline-sel' });
+          sel.appendChild(el('option', { value: '' }, '\u2014'));
+          def.options.forEach(v => { const o = el('option', { value: v }, v); if (v === (cond.value || '')) o.selected = true; sel.appendChild(o); });
+          sel.onchange = () => { cond.value = sel.value; onUpdate(); };
+          sel.onclick = (e) => e.stopPropagation();
+          container.appendChild(sel);
+        } else {
+          const inp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '' });
+          inp.oninput = () => { cond.value = inp.value; onUpdate(); };
+          inp.onclick = (e) => e.stopPropagation();
+          container.appendChild(inp);
+        }
+      } else if (key === 'spell') {
+        const inp = el('input', { type: 'text', class: 'inline-input inline-spell', value: cond.spell || '', placeholder: 'spell' });
+        inp.oninput = () => { cond.spell = inp.value; onUpdate(); };
+        inp.onclick = (e) => e.stopPropagation();
+        container.appendChild(inp);
+      } else if (key === 'stat') {
+        const sel = el('select', { class: 'inline-sel' });
+        (def.options || []).forEach(st => { const o = el('option', { value: st }, st); if (st === (cond.statType || '')) o.selected = true; sel.appendChild(o); });
+        sel.onchange = () => { cond.statType = sel.value; onUpdate(); };
+        sel.onclick = (e) => e.stopPropagation();
+        container.appendChild(sel);
+      } else if (key === 'distance') {
+        const inp = el('input', { type: 'text', class: 'inline-input', value: cond.distance || '', placeholder: 'yds' });
+        inp.oninput = () => { cond.distance = inp.value; onUpdate(); };
+        inp.onclick = (e) => e.stopPropagation();
+        container.appendChild(inp);
+      }
+      i = end + 1;
+    } else {
+      let j = template.indexOf('{', i);
+      if (j === -1) j = template.length;
+      container.appendChild(document.createTextNode(template.substring(i, j)));
+      i = j;
+    }
+  }
+}
+
+// =========== OUTPUT ===========
+
+function renderOutput() {
+  const text = serializeAll();
+  const out = $('output-text');
+  if (!text.trim() || text.trim() === '/cast') {
+    out.innerHTML = '';
+    out.appendChild(el('span', { class: 'empty-hint' }, 'your macro will appear here'));
+  } else {
+    out.textContent = text;
+  }
+}
+
+// =========== EXAMPLES ===========
+
+function renderExample() {
+  const ex = EXAMPLES[exIdx];
+  $('ex-desc').textContent = ex.desc;
+  $('ex-code').textContent = ex.text;
+}
+
+function nextExample() {
+  const floatEl = $('example-float');
+  floatEl.classList.add('fading');
+  setTimeout(() => {
+    exIdx = (exIdx + 1) % EXAMPLES.length;
+    renderExample();
+    floatEl.classList.remove('fading');
+  }, 500);
 }
 
 function loadExample() {
-  hidePicker();
-  const ex = EXAMPLES[carouselIdx];
-  lines = parseMacro(ex.text);
-  renderBuilder();
+  const ex = EXAMPLES[exIdx];
+  const parsed = parseMacro(ex.text);
+  actions = parsed.map(lineToAction);
+  if (actions.length === 0) actions.push(freshAction());
+  expandedMore = {};
+  renderWizard();
 }
 
-function startCarousel() {
-  carouselTimer = setInterval(() => { nextExample(1); }, 9000);
-}
-
-function resetCarouselTimer() {
-  if (carouselTimer) clearInterval(carouselTimer);
-  startCarousel();
-}
-
-// ============ INIT ============
+// =========== INIT ===========
 
 function init() {
-  lines.push({ command: '/cast', alternatives: [createAlt()] });
-  renderBuilder();
-  renderCarousel();
-  startCarousel();
+  actions.push(freshAction());
+  renderWizard();
+  renderExample();
 
-  $('btn-add-line').onclick = () => {
-    lines.push({ command: '/cast', alternatives: [createAlt()] });
-    renderBuilder();
-  };
+  exTimer = setInterval(nextExample, 8000);
+  $('example-float').addEventListener('mouseenter', () => { if (exTimer) { clearInterval(exTimer); exTimer = null; } });
+  $('example-float').addEventListener('mouseleave', () => { exTimer = setInterval(nextExample, 8000); });
+  $('example-float').addEventListener('click', loadExample);
 
-  $('btn-copy').onclick = () => {
+  $('btn-add').addEventListener('click', () => { actions.push(freshAction()); renderWizard(); });
+
+  $('btn-copy').addEventListener('click', () => {
     const text = serializeAll();
     navigator.clipboard.writeText(text).then(() => {
       const btn = $('btn-copy');
-      btn.textContent = 'Copied!';
+      btn.textContent = 'copied!';
       btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+      setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
     });
-  };
-
-  $('btn-next').onclick = () => nextExample(1);
-  $('btn-prev').onclick = () => nextExample(-1);
-  $('btn-load').onclick = loadExample;
-
-  $('picker-overlay').onclick = hidePicker;
-
-  let pickerScope = 'player';
-  $('cond-tabs').addEventListener('click', e => {
-    if (e.target.classList.contains('tab')) {
-      pickerScope = e.target.dataset.scope;
-      $('cond-tabs').querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === e.target));
-      renderPickerList(pickerScope, $('cond-search').value);
-    }
   });
-
-  $('cond-search').addEventListener('input', () => {
-    renderPickerList(pickerScope, $('cond-search').value);
-  });
-
-  $('carousel').addEventListener('mouseenter', () => { if (carouselTimer) clearInterval(carouselTimer); carouselTimer = null; });
-  $('carousel').addEventListener('mouseleave', () => { startCarousel(); });
 }
 
 document.addEventListener('DOMContentLoaded', init);
