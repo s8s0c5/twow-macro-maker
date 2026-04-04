@@ -37,6 +37,11 @@ header p { font-size: 0.8rem; color: var(--dim); margin-top: 2px; }
   opacity: 0.82;
 }
 .example-float:hover { opacity: 1; box-shadow: 0 4px 18px rgba(74,124,155,0.13); transform: translateY(-1px); }
+.example-float .ex-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.example-float .ex-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; color: #9db4c4; }
+.example-float .ex-use { font-size: 0.7rem; color: var(--accent); cursor: pointer; opacity: 0; transition: opacity 0.2s; }
+.example-float:hover .ex-use { opacity: 1; }
+.example-float .ex-use:hover { text-decoration: underline; }
 .example-float .ex-desc { font-size: 0.78rem; color: #7a8fa0; margin-bottom: 3px; font-style: italic; }
 .example-float .ex-code { font: 0.8rem/1.4 'Consolas','Fira Code',monospace; color: #506878; white-space: pre-wrap; }
 .example-float.fading { opacity: 0; transform: translateY(4px); }

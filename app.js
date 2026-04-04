@@ -446,7 +446,8 @@ function init() {
   exTimer = setInterval(nextExample, 8000);
   $('example-float').addEventListener('mouseenter', () => { if (exTimer) { clearInterval(exTimer); exTimer = null; } });
   $('example-float').addEventListener('mouseleave', () => { exTimer = setInterval(nextExample, 8000); });
-  $('example-float').addEventListener('click', loadExample);
+  $('example-float').addEventListener('click', () => { nextExample(); });
+  $('ex-use').addEventListener('click', (e) => { e.stopPropagation(); loadExample(); });
 
   $('btn-add').addEventListener('click', () => { actions.push(freshAction()); renderWizard(); });
 
