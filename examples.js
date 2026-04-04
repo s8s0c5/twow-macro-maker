@@ -83,4 +83,40 @@ const EXAMPLES = [
     desc: 'Cast instant Rejuvenation while moving, Healing Touch when standing still.',
     text: '/cast [moving] Rejuvenation; Healing Touch'
   },
+  {
+    title: 'Heal Priority',
+    cls: 'Paladin',
+    desc: 'Holy Light on low-health mouseover, otherwise Flash of Light.',
+    text: '/cast [@mouseover,help,alive,hp:<40] Holy Light; [@mouseover,help,alive] Flash of Light'
+  },
+  {
+    title: 'Interrupt',
+    cls: 'Shaman',
+    desc: 'Earth Shock to interrupt if target is casting. Lightning Bolt otherwise.',
+    text: '/cast [casting] Earth Shock; Lightning Bolt'
+  },
+  {
+    title: 'Poison Upkeep',
+    cls: 'Rogue',
+    desc: 'Apply Instant Poison when main hand imbue runs out.',
+    text: '/applymain [nomhimbue] Instant Poison'
+  },
+  {
+    title: 'Distance AoE',
+    cls: 'Mage',
+    desc: 'Arcane Explosion if 3+ enemies within 10 yards, otherwise Frostbolt.',
+    text: '/cast [distance:10>2,mouseuse] Arcane Explosion; Frostbolt'
+  },
+  {
+    title: 'Buff Cap Aware',
+    cls: 'Druid',
+    desc: 'Skip buffing if target buff bar is full.',
+    text: '/stopmacro [buffcapped]\n/cast [@mouseover,help,nobuff:Mark_of_the_Wild] Mark of the Wild'
+  },
+  {
+    title: 'Pet Manage',
+    cls: 'Hunter',
+    desc: 'Pet attacks in combat, follows you out of combat.',
+    text: '/petattack [combat,harm]\n/petfollow [nocombat]'
+  },
 ];

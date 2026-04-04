@@ -25,9 +25,10 @@ function cmdDef(cmd) { return COMMANDS.find(c => c.cmd === cmd); }
 let actions = [];
 let exIdx = 0;
 let exTimer = null;
+let expandedMore = {};
 
 function freshAction() {
-  return { command: '/cast', spell: '', target: '', conds: {}, fallback: '' };
+  return { command: '/cast', spell: '', target: '', conds: {}, fallbacks: [], prefix: '', reset: '' };
 }
 
 function freshCond(name) {
@@ -94,17 +95,32 @@ function serializeCond(cond) {
 }
 
 function serializeAction(a) {
+  const parts = [];
   const condList = Object.values(a.conds);
   const cp = [];
   if (a.target) cp.push(a.target);
   condList.forEach(c => cp.push(serializeCond(c)));
-  let line = a.command;
-  let alt1 = '';
-  if (cp.length > 0) alt1 = '[' + cp.join(',') + '] ';
-  alt1 += a.spell;
-  if (a.fallback) alt1 += '; ' + a.fallback;
-  const body = alt1.trim();
-  return body ? line + ' ' + body : line;
+
+  let primary = '';
+  if (cp.length > 0) primary = '[' + cp.join(',') + '] ';
+  if (a.command === '/castsequence' && a.reset) primary += a.reset + ' ';
+  primary += (a.prefix || '') + a.spell;
+  parts.push(primary);
+
+  for (const fb of a.fallbacks) {
+    if (!fb.spell && !Object.keys(fb.conds || {}).length) continue;
+    const fbConds = Object.values(fb.conds || {});
+    const fbCp = [];
+    if (a.target) fbCp.push(a.target);
+    fbConds.forEach(c => fbCp.push(serializeCond(c)));
+    let part = '';
+    if (fbCp.length > 0) part = '[' + fbCp.join(',') + '] ';
+    part += (fb.prefix || '') + fb.spell;
+    parts.push(part);
+  }
+
+  const body = parts.filter(p => p.trim()).join('; ');
+  return body ? a.command + ' ' + body : a.command;
 }
 
 function serializeAll() { return actions.map(serializeAction).join('\n'); }
@@ -164,16 +180,26 @@ function lineToAction(line) {
   a.command = line.command;
   if (line.alternatives && line.alternatives.length > 0) {
     const alt = line.alternatives[0];
-    a.spell = alt.spell; a.target = alt.target;
+    a.spell = alt.spell;
+    a.target = alt.target;
+    a.prefix = alt.prefix || '';
     alt.conditions.forEach(c => { a.conds[c.name] = c; });
-    if (line.alternatives.length > 1) a.fallback = line.alternatives[1].spell;
+    for (let i = 1; i < line.alternatives.length; i++) {
+      const fb = line.alternatives[i];
+      const fbConds = {};
+      fb.conditions.forEach(c => { fbConds[c.name] = c; });
+      if (!a.target && fb.target) a.target = fb.target;
+      a.fallbacks.push({ spell: fb.spell, conds: fbConds, prefix: fb.prefix || '' });
+    }
+  }
+  if (a.command === '/castsequence') {
+    const rm = a.spell.match(/^(reset=\S+)\s+(.*)/);
+    if (rm) { a.reset = rm[1]; a.spell = rm[2]; }
   }
   return a;
 }
 
 // =========== RENDER WIZARD ===========
-
-let expandedMore = {};
 
 function renderWizard() {
   const w = $('wizard');
@@ -186,7 +212,6 @@ function renderAction(a, idx) {
   const cd = cmdDef(a.command);
   const block = el('div', { class: 'action-block' });
 
-  // Header
   const hdr = el('div', { class: 'action-num' });
   hdr.appendChild(el('span', {}, actions.length > 1 ? 'Action ' + (idx + 1) : ''));
   if (actions.length > 1) {
@@ -198,151 +223,193 @@ function renderAction(a, idx) {
   const commonCmds = COMMANDS.filter(c => c.common);
   const moreCmds = COMMANDS.filter(c => !c.common);
   const cmdOpts = el('div', { class: 'step-options' });
-  const renderCmdBtn = (c) => {
-    const btn = el('button', {
-      class: 'option' + (a.command === c.cmd ? ' selected' : ''),
-      title: c.cmd,
-      onclick: () => { a.command = c.cmd; renderWizard(); }
-    }, c.human);
-    return btn;
-  };
+  const renderCmdBtn = (c) => el('button', {
+    class: 'option' + (a.command === c.cmd ? ' selected' : ''),
+    title: c.cmd,
+    onclick: () => { a.command = c.cmd; renderWizard(); }
+  }, c.human);
   commonCmds.forEach(c => cmdOpts.appendChild(renderCmdBtn(c)));
-
   const moreKey = 'cmd_' + idx;
-  if (expandedMore[moreKey]) {
-    moreCmds.forEach(c => cmdOpts.appendChild(renderCmdBtn(c)));
-  } else if (moreCmds.length) {
-    cmdOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKey] = true; renderWizard(); } }, 'more...'));
-  }
+  if (expandedMore[moreKey]) moreCmds.forEach(c => cmdOpts.appendChild(renderCmdBtn(c)));
+  else if (moreCmds.length) cmdOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKey] = true; renderWizard(); } }, 'more...'));
   block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, 'I want to'), cmdOpts));
 
-  // Step 2: Spell
+  // Step 2: Spell (with prefix toggles + castsequence reset)
   if (cd && cd.hasSpell) {
-    const inp = el('input', { type: 'text', class: 'spell-field', value: a.spell || '', placeholder: 'spell or item name' });
+    const spellStep = el('div', { class: 'step' });
+    if (a.command === '/castsequence') {
+      spellStep.appendChild(el('span', { class: 'step-label' }, 'Reset'));
+      const resetInp = el('input', { type: 'text', class: 'spell-field', value: a.reset || '', placeholder: 'e.g. reset=3/target' });
+      resetInp.oninput = () => { a.reset = resetInp.value; renderOutput(); };
+      spellStep.appendChild(resetInp);
+      spellStep.appendChild(el('span', { class: 'step-label', style: 'margin-top:4px' }, 'Spells (comma-separated)'));
+    } else {
+      spellStep.appendChild(el('span', { class: 'step-label' }, 'The spell is'));
+    }
+    const spellRow = el('div', { class: 'spell-row' });
+    const pg = el('span', { class: 'prefix-group' });
+    ['!','?','~'].forEach(p => {
+      pg.appendChild(el('button', {
+        class: 'prefix-btn' + (a.prefix === p ? ' active' : ''),
+        title: p === '!' ? 'Toggle spell on/off' : p === '?' ? 'Hide from tooltip' : 'Suppress errors',
+        onclick: () => { a.prefix = a.prefix === p ? '' : p; renderWizard(); }
+      }, p));
+    });
+    spellRow.appendChild(pg);
+    const inp = el('input', { type: 'text', class: 'spell-field', value: a.spell || '', placeholder: a.command === '/castsequence' ? 'Spell1, Spell2, Spell3' : 'spell or item name' });
     inp.oninput = () => { a.spell = inp.value; renderOutput(); };
-    block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, 'The spell is'), inp));
+    spellRow.appendChild(inp);
+    spellStep.appendChild(spellRow);
+    block.appendChild(spellStep);
   }
 
   // Step 3: Target
   const commonTargets = TARGETS.slice(0, 5);
   const moreTargets = TARGETS.slice(5);
   const tgtOpts = el('div', { class: 'step-options' });
-  const renderTgtBtn = (t) => {
-    return el('button', {
-      class: 'option' + (a.target === t.value ? ' selected' : ''),
-      title: t.syntax || t.value,
-      onclick: () => { a.target = t.value; renderWizard(); }
-    }, t.human);
-  };
+  const renderTgtBtn = (t) => el('button', {
+    class: 'option' + (a.target === t.value ? ' selected' : ''),
+    title: t.syntax || t.value,
+    onclick: () => { a.target = t.value; renderWizard(); }
+  }, t.human);
   commonTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
   const moreKeyT = 'tgt_' + idx;
-  if (expandedMore[moreKeyT]) {
-    moreTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
-  } else if (moreTargets.length) {
-    tgtOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKeyT] = true; renderWizard(); } }, 'more...'));
-  }
+  if (expandedMore[moreKeyT]) moreTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
+  else if (moreTargets.length) tgtOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKeyT] = true; renderWizard(); } }, 'more...'));
   block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, cd && cd.hasSpell ? 'Cast it on' : 'Apply to'), tgtOpts));
 
   // Step 4: Conditions
   const condStep = el('div', { class: 'step' });
   condStep.appendChild(el('span', { class: 'step-label' }, 'But only when'));
-  condStep.appendChild(renderCondSection(a, idx, 'player', 'About me'));
-  condStep.appendChild(renderCondSection(a, idx, 'target', 'About my target'));
+  condStep.appendChild(renderCondSection(a.conds, idx, 'player', 'About me', ''));
+  condStep.appendChild(renderCondSection(a.conds, idx, 'target', 'About my target', ''));
   block.appendChild(condStep);
 
-  // Step 5: Fallback
+  // Step 5: Fallbacks
   const fbStep = el('div', { class: 'step' });
   fbStep.appendChild(el('span', { class: 'step-label' }, 'Otherwise'));
-  const fbRow = el('div', { class: 'fallback-row' });
-  const nothingBtn = el('button', {
-    class: 'option' + (!a.fallback ? ' selected' : ''),
-    onclick: () => { a.fallback = ''; renderWizard(); }
-  }, 'Do nothing');
-  fbRow.appendChild(nothingBtn);
-  fbRow.appendChild(document.createTextNode(' or cast '));
-  const fbInput = el('input', { type: 'text', class: 'spell-field', value: a.fallback || '', placeholder: 'spell name' });
-  fbInput.oninput = () => { a.fallback = fbInput.value; renderOutput(); };
-  fbInput.onfocus = () => { nothingBtn.classList.remove('selected'); };
-  fbRow.appendChild(fbInput);
-  fbRow.appendChild(document.createTextNode(' instead'));
-  fbStep.appendChild(fbRow);
+
+  a.fallbacks.forEach((fb, fbIdx) => {
+    const fbBlock = el('div', { class: 'fallback-block' });
+    const fbRow = el('div', { class: 'fallback-row' });
+    fbRow.appendChild(document.createTextNode('Cast '));
+    const fpg = el('span', { class: 'prefix-group' });
+    ['!','?','~'].forEach(p => {
+      fpg.appendChild(el('button', {
+        class: 'prefix-btn' + (fb.prefix === p ? ' active' : ''),
+        onclick: () => { fb.prefix = fb.prefix === p ? '' : p; renderWizard(); }
+      }, p));
+    });
+    fbRow.appendChild(fpg);
+    const fbInp = el('input', { type: 'text', class: 'spell-field', value: fb.spell || '', placeholder: 'spell' });
+    fbInp.oninput = () => { fb.spell = fbInp.value; renderOutput(); };
+    fbRow.appendChild(fbInp);
+    fbRow.appendChild(document.createTextNode(' instead'));
+
+    const hasAnyConds = Object.keys(fb.conds || {}).length > 0;
+    const condExpandKey = 'fbcond_' + idx + '_' + fbIdx;
+    const showConds = hasAnyConds || expandedMore[condExpandKey];
+    fbRow.appendChild(el('button', { class: 'more-toggle',
+      onclick: () => { expandedMore[condExpandKey] = !expandedMore[condExpandKey]; renderWizard(); }
+    }, showConds ? '- conditions' : '+ if...'));
+    fbRow.appendChild(el('button', { class: 'remove-action',
+      onclick: () => { a.fallbacks.splice(fbIdx, 1); renderWizard(); }
+    }, '\u00d7'));
+    fbBlock.appendChild(fbRow);
+
+    if (showConds) {
+      const mp = 'fb' + fbIdx + '_';
+      fbBlock.appendChild(renderCondSection(fb.conds, idx, 'player', 'About me', mp));
+      fbBlock.appendChild(renderCondSection(fb.conds, idx, 'target', 'About my target', mp));
+    }
+    fbStep.appendChild(fbBlock);
+  });
+
+  fbStep.appendChild(el('button', { class: 'more-toggle',
+    onclick: () => { a.fallbacks.push({ spell: '', conds: {}, prefix: '' }); renderWizard(); }
+  }, '+ or cast something else'));
   block.appendChild(fbStep);
 
   return block;
 }
 
-function renderCondSection(a, idx, scope, label) {
+function renderCondSection(conds, idx, scope, label, morePrefix) {
   const sec = el('div', { class: 'cond-section' });
   sec.appendChild(el('div', { class: 'cond-section-label' }, label));
-
   const commonNames = scope === 'player' ? COMMON_PLAYER : COMMON_TARGET;
   const allConds = CONDITIONALS.filter(c => c.scope === scope);
   const commonConds = allConds.filter(c => commonNames.includes(c.name));
   const moreConds = allConds.filter(c => !commonNames.includes(c.name));
-
   const cards = el('div', { class: 'cond-cards' });
-  commonConds.forEach(def => cards.appendChild(renderCondCard(def, a, idx)));
-
-  const moreKey = scope + '_' + idx;
-  if (expandedMore[moreKey]) {
-    moreConds.forEach(def => cards.appendChild(renderCondCard(def, a, idx)));
-  } else if (moreConds.length) {
-    cards.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKey] = true; renderWizard(); } }, 'more options...'));
-  }
-
+  commonConds.forEach(def => cards.appendChild(renderCondCard(def, conds, idx, morePrefix)));
+  const moreKey = morePrefix + scope + '_' + idx;
+  if (expandedMore[moreKey]) moreConds.forEach(def => cards.appendChild(renderCondCard(def, conds, idx, morePrefix)));
+  else if (moreConds.length) cards.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKey] = true; renderWizard(); } }, 'more options...'));
   sec.appendChild(cards);
   return sec;
 }
 
-function renderCondCard(def, action, actionIdx) {
+function renderCondCard(def, conds, actionIdx, morePrefix) {
   const key = def.name;
-  const isActive = !!action.conds[key];
-  const cond = action.conds[key] || freshCond(def.name);
+  const isActive = !!conds[key];
+  const cond = conds[key] || freshCond(def.name);
 
   const card = el('div', { class: 'cond-card' + (isActive ? ' active' : '') });
-
-  const check = el('span', { class: 'cond-check' }, isActive ? '\u2713' : '');
+  card.appendChild(el('span', { class: 'cond-check' }, isActive ? '\u2713' : ''));
 
   const textEl = el('span', { class: 'cond-text' });
   const template = cond.negated && def.humanNeg ? def.humanNeg : def.human;
-  renderTemplate(textEl, template, cond, def, () => renderOutput());
+  renderTemplate(textEl, template, cond, def, () => renderOutput(), conds, key);
 
-  card.appendChild(check);
+  // spellComparison extras: time/stacks inputs when template lacks {op}/{value}
+  if (def.type === 'spellComparison' && !def.human.includes('{op}')) {
+    const extra = el('span', { class: 'cond-extra' });
+    const opSel = el('select', { class: 'inline-sel' });
+    [['','--'],['<','under'],['>', 'over'],['=','at']].forEach(([v,l]) => {
+      const o = el('option', { value: v }, l); if (v === (cond.operator || '')) o.selected = true; opSel.appendChild(o);
+    });
+    opSel.onchange = () => { if (!conds[key]) conds[key] = cond; cond.operator = opSel.value; renderWizard(); };
+    opSel.onclick = (e) => e.stopPropagation();
+    extra.appendChild(opSel);
+    if (cond.operator) {
+      const valInp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '' });
+      valInp.oninput = () => { cond.value = valInp.value; renderOutput(); };
+      valInp.onclick = (e) => e.stopPropagation();
+      extra.appendChild(valInp);
+      const stackBtn = el('span', {
+        class: 'stack-toggle' + (cond.isStacks ? ' on' : ''),
+        onclick: (e) => { e.stopPropagation(); cond.isStacks = !cond.isStacks; renderWizard(); }
+      }, cond.isStacks ? 'stacks' : 'sec');
+      extra.appendChild(stackBtn);
+    }
+    textEl.appendChild(extra);
+  }
+
   card.appendChild(textEl);
 
   if (def.negatable && def.humanNeg) {
-    const negBtn = el('span', {
+    card.appendChild(el('span', {
       class: 'neg-toggle',
       title: 'Toggle: ' + (cond.negated ? def.human : def.humanNeg),
       onclick: (e) => {
         e.stopPropagation();
-        if (isActive) {
-          action.conds[key].negated = !action.conds[key].negated;
-        } else {
-          const nc = freshCond(def.name);
-          nc.negated = true;
-          action.conds[key] = nc;
-        }
+        if (isActive) { conds[key].negated = !conds[key].negated; }
+        else { const nc = freshCond(def.name); nc.negated = true; conds[key] = nc; }
         renderWizard();
       }
-    }, cond.negated ? 'undo' : 'not');
-    card.appendChild(negBtn);
+    }, cond.negated ? 'undo' : 'not'));
   }
 
-  if (def.requires) {
-    card.appendChild(el('span', { class: 'cond-req', title: def.requires }, '\u26A0'));
-  }
+  if (def.requires) card.appendChild(el('span', { class: 'cond-req', title: def.requires }, '\u26A0'));
 
   card.addEventListener('click', () => {
-    if (isActive) { delete action.conds[key]; }
-    else { action.conds[key] = freshCond(def.name); }
+    if (isActive) delete conds[key]; else conds[key] = freshCond(def.name);
     renderWizard();
   });
-
   return card;
 }
 
-function renderTemplate(container, template, cond, def, onUpdate) {
+function renderTemplate(container, template, cond, def, onUpdate, condsObj, condKey) {
   const ops = [['<','below'],['>','above'],['<=','at most'],['>=','at least'],['=','exactly']];
   let i = 0;
   while (i < template.length) {
@@ -357,12 +424,23 @@ function renderTemplate(container, template, cond, def, onUpdate) {
         container.appendChild(sel);
       } else if (key === 'value') {
         if (def.options && def.options.length) {
-          const sel = el('select', { class: 'inline-sel' });
-          sel.appendChild(el('option', { value: '' }, '\u2014'));
-          def.options.forEach(v => { const o = el('option', { value: v }, v); if (v === (cond.value || '')) o.selected = true; sel.appendChild(o); });
-          sel.onchange = () => { cond.value = sel.value; onUpdate(); };
-          sel.onclick = (e) => e.stopPropagation();
-          container.appendChild(sel);
+          const selected = new Set((cond.value || '').split('/').filter(Boolean));
+          const chips = el('span', { class: 'inline-chips' });
+          def.options.forEach(v => {
+            const isOn = selected.has(v);
+            chips.appendChild(el('span', {
+              class: 'chip' + (isOn ? ' on' : ''),
+              onclick: (e) => {
+                e.stopPropagation();
+                if (!condsObj[condKey]) condsObj[condKey] = cond;
+                const sel = new Set((cond.value || '').split('/').filter(Boolean));
+                if (sel.has(v)) sel.delete(v); else sel.add(v);
+                cond.value = [...sel].join('/');
+                renderWizard();
+              }
+            }, v));
+          });
+          container.appendChild(chips);
         } else {
           const inp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '' });
           inp.oninput = () => { cond.value = inp.value; onUpdate(); };
@@ -401,7 +479,8 @@ function renderTemplate(container, template, cond, def, onUpdate) {
 function renderOutput() {
   const text = serializeAll();
   const out = $('output-text');
-  if (!text.trim() || text.trim() === '/cast') {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === '/cast') {
     out.innerHTML = '';
     out.appendChild(el('span', { class: 'empty-hint' }, 'your macro will appear here'));
   } else {

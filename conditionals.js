@@ -23,7 +23,13 @@ const COMMANDS = [
   { cmd: '/petfollow', human: 'Pet: follow', hasSpell: false },
   { cmd: '/petpassive', human: 'Pet: passive', hasSpell: false },
   { cmd: '/petdefensive', human: 'Pet: defensive', hasSpell: false },
+  { cmd: '/petwait', human: 'Pet: stay', hasSpell: false },
+  { cmd: '/petaggressive', human: 'Pet: aggressive', hasSpell: false },
   { cmd: '/quickheal', human: 'Smart heal', hasSpell: false },
+  { cmd: '/equip13', human: 'Equip trinket 1', hasSpell: true },
+  { cmd: '/equip14', human: 'Equip trinket 2', hasSpell: true },
+  { cmd: '/runmacro', human: 'Run another macro', hasSpell: true },
+  { cmd: '/retarget', human: 'Retarget nearest enemy', hasSpell: false },
   { cmd: '/equipmh', human: 'Equip main hand', hasSpell: true },
   { cmd: '/equipoh', human: 'Equip off hand', hasSpell: true },
   { cmd: '/applymain', human: 'Apply to main hand', hasSpell: true },
@@ -44,6 +50,19 @@ const TARGETS = [
   { value: '@targettarget', human: 'My target\'s target', syntax: '@targettarget' },
   { value: '@focustarget', human: 'My focus\'s target', syntax: '@focustarget' },
   { value: '@targetowner', human: 'My target\'s owner', syntax: '@targetowner' },
+  { value: '@mouseovertarget', human: 'My mouseover\'s target', syntax: '@mouseovertarget' },
+  { value: '@party1pet', human: 'Party 1\'s pet', syntax: '@party1pet' },
+  { value: '@party2pet', human: 'Party 2\'s pet', syntax: '@party2pet' },
+  { value: '@party3pet', human: 'Party 3\'s pet', syntax: '@party3pet' },
+  { value: '@party4pet', human: 'Party 4\'s pet', syntax: '@party4pet' },
+  { value: '@mark1', human: 'Skull mark', syntax: '@mark1' },
+  { value: '@mark2', human: 'Cross mark', syntax: '@mark2' },
+  { value: '@mark3', human: 'Square mark', syntax: '@mark3' },
+  { value: '@mark4', human: 'Moon mark', syntax: '@mark4' },
+  { value: '@mark5', human: 'Triangle mark', syntax: '@mark5' },
+  { value: '@mark6', human: 'Diamond mark', syntax: '@mark6' },
+  { value: '@mark7', human: 'Circle mark', syntax: '@mark7' },
+  { value: '@mark8', human: 'Star mark', syntax: '@mark8' },
 ];
 
 const CONDITIONALS = [
@@ -166,6 +185,10 @@ const CONDITIONALS = [
   { name: 'incominghit', scope: 'player', cat: 'Auto-Attack', type: 'value', negatable: true,
     human: "Incoming hit is a {value}",
     options: ['crit','glancing','crushing','miss','dodge','parry','blocked','hit'], requires: 'Nampower v2.24' },
+  { name: 'stimer', scope: 'player', cat: 'Auto-Attack', type: 'comparison', negatable: true,
+    human: "Swing timer past {op} {value}%", requires: 'SP_SwingTimer' },
+  { name: 'rtimer', scope: 'player', cat: 'Auto-Attack', type: 'comparison', negatable: true,
+    human: "Ranged timer past {op} {value}%", requires: 'SP_SwingTimer' },
 
   // -- Context --
   { name: 'hastarget', scope: 'player', cat: 'Context', type: 'boolean', negatable: false,
@@ -183,7 +206,7 @@ const CONDITIONALS = [
     human: "My level is {op} {value}" },
   { name: 'stat', scope: 'player', cat: 'Context', type: 'stat', negatable: true,
     human: "My {stat} is {op} {value}",
-    options: ['str','agi','stam','int','spi','ap','rap','healing','spell_power','armor','defense'] },
+    options: ['str','agi','stam','int','spi','ap','rap','healing','spell_power','arcane_power','fire_power','frost_power','nature_power','shadow_power','armor','defense','arcane_res','fire_res','frost_res','nature_res','shadow_res'] },
 
   // ==================== TARGET ====================
   // -- Basics --
