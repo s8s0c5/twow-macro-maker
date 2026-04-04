@@ -58,7 +58,7 @@ function serializeCond(cond) {
   if (!def) return cond.value ? n + ':' + cond.value : n;
   switch (def.type) {
     case 'boolean': return n;
-    case 'comparison': return cond.value ? n + ':' + (cond.operator || '<') + cond.value : n;
+    case 'comparison': return cond.value ? n + ':' + (cond.operator || '<') + cond.value : null;
     case 'value': return cond.value ? n + ':' + cond.value : n;
     case 'spell': return cond.spell ? n + ':' + fmtSpell(cond.spell) : n;
     case 'spellComparison': {
@@ -99,7 +99,7 @@ function serializeAction(a) {
   const condList = Object.values(a.conds);
   const cp = [];
   if (a.target) cp.push(a.target);
-  condList.forEach(c => cp.push(serializeCond(c)));
+  condList.forEach(c => { const s = serializeCond(c); if (s) cp.push(s); });
 
   let primary = '';
   if (cp.length > 0) primary = '[' + cp.join(',') + '] ';
@@ -112,7 +112,7 @@ function serializeAction(a) {
     const fbConds = Object.values(fb.conds || {});
     const fbCp = [];
     if (a.target) fbCp.push(a.target);
-    fbConds.forEach(c => fbCp.push(serializeCond(c)));
+    fbConds.forEach(c => { const s = serializeCond(c); if (s) fbCp.push(s); });
     let part = '';
     if (fbCp.length > 0) part = '[' + fbCp.join(',') + '] ';
     part += (fb.prefix || '') + fb.spell;
@@ -372,7 +372,7 @@ function renderCondCard(def, conds, actionIdx, morePrefix) {
     opSel.onclick = (e) => e.stopPropagation();
     extra.appendChild(opSel);
     if (cond.operator) {
-      const valInp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '' });
+      const valInp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '', placeholder: '#' });
       valInp.oninput = () => { cond.value = valInp.value; renderOutput(); };
       valInp.onclick = (e) => e.stopPropagation();
       extra.appendChild(valInp);
@@ -444,7 +444,7 @@ function renderTemplate(container, template, cond, def, onUpdate, condsObj, cond
           });
           container.appendChild(chips);
         } else {
-          const inp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '' });
+          const inp = el('input', { type: 'text', class: 'inline-input', value: cond.value || '', placeholder: '#' });
           inp.oninput = () => { cond.value = inp.value; onUpdate(); };
           inp.onclick = (e) => e.stopPropagation();
           container.appendChild(inp);

@@ -104,7 +104,7 @@ const CONDITIONALS = [
     human: "I'm {value} (crowd controlled)", humanNeg: "I'm not crowd controlled",
     options: ['stun','fear','root','snare','slow','sleep','charm','polymorph','banish','horror','disorient','silence','disarm','daze','freeze','shackle'] },
   { name: 'mybuffcount', scope: 'player', cat: 'My Buffs & Effects', type: 'comparison', negatable: true,
-    human: "My buff count is {op} {value}" },
+    human: "I have {op} {value} buffs" },
   { name: 'mybuffcapped', scope: 'player', cat: 'My Buffs & Effects', type: 'boolean', negatable: true,
     human: "My buff bar is full", humanNeg: "My buff bar has room", requires: 'Nampower v2.20' },
   { name: 'mydebuffcapped', scope: 'player', cat: 'My Buffs & Effects', type: 'boolean', negatable: true,

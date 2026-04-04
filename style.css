@@ -152,9 +152,9 @@ input[type="text"]:focus { border-color: var(--accent); }
   outline: none;
 }
 .cond-text .inline-input {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border);
+  background: rgba(74,124,155,0.07);
+  border: 1px dashed var(--border);
+  border-radius: 3px;
   font: inherit;
   font-size: 0.82rem;
   color: inherit;
@@ -163,6 +163,7 @@ input[type="text"]:focus { border-color: var(--accent); }
   text-align: center;
   outline: none;
 }
+.cond-text .inline-input::placeholder { color: var(--accent); opacity: 0.5; }
 .cond-text .inline-input:focus, .cond-text .inline-sel:focus { border-color: var(--accent); }
 .cond-text .inline-spell { width: 90px; text-align: left; }
 
