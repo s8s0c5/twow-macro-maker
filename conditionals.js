@@ -34,7 +34,7 @@ const COMMANDS = [
   { cmd: '/equipoh', human: 'Equip off hand', hasSpell: true },
   { cmd: '/applymain', human: 'Apply to main hand', hasSpell: true },
   { cmd: '/applyoff', human: 'Apply to off hand', hasSpell: true },
-  { cmd: '#showtooltip', human: 'Show tooltip for', hasSpell: true },
+  { cmd: '#showtooltip', human: 'Show tooltip for', hasSpell: true, common: true },
 ];
 
 const TARGETS = [
