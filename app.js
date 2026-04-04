@@ -426,7 +426,9 @@ function renderTemplate(container, template, cond, def, onUpdate, condsObj, cond
         if (def.options && def.options.length) {
           const selected = new Set((cond.value || '').split('/').filter(Boolean));
           const chips = el('span', { class: 'inline-chips' });
-          def.options.forEach(v => {
+          def.options.forEach(opt => {
+            const v = typeof opt === 'object' ? opt.value : opt;
+            const l = typeof opt === 'object' ? opt.label : opt;
             const isOn = selected.has(v);
             chips.appendChild(el('span', {
               class: 'chip' + (isOn ? ' on' : ''),
@@ -438,7 +440,7 @@ function renderTemplate(container, template, cond, def, onUpdate, condsObj, cond
                 cond.value = [...sel].join('/');
                 renderWizard();
               }
-            }, v));
+            }, l));
           });
           container.appendChild(chips);
         } else {

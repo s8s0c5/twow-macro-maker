@@ -140,11 +140,24 @@ const CONDITIONALS = [
 
   // -- Gear & Stance --
   { name: 'stance', scope: 'player', cat: 'Gear & Stance', type: 'value', negatable: true,
-    human: "I'm in stance {value}", humanNeg: "I'm not in stance {value}",
-    options: ['0','1','2','3','4','5','6'], hint: '1=Battle, 2=Defensive, 3=Berserker' },
+    human: "I'm in {value}", humanNeg: "I'm not in {value}",
+    options: [
+      {value:'0',label:'No stance'},
+      {value:'1',label:'Battle Stance'},
+      {value:'2',label:'Defensive Stance'},
+      {value:'3',label:'Berserker Stance'},
+    ] },
   { name: 'form', scope: 'player', cat: 'Gear & Stance', type: 'value', negatable: true,
-    human: "I'm in form {value}", humanNeg: "I'm not in form {value}",
-    options: ['0','1','2','3','4','5','6'], hint: '0=caster, 1-6=forms' },
+    human: "I'm in {value}", humanNeg: "I'm not in {value}",
+    options: [
+      {value:'0',label:'Caster form'},
+      {value:'1',label:'Bear'},
+      {value:'2',label:'Aquatic'},
+      {value:'3',label:'Cat'},
+      {value:'4',label:'Travel'},
+      {value:'5',label:'Moonkin'},
+      {value:'6',label:'Tree of Life'},
+    ] },
   { name: 'equipped', scope: 'player', cat: 'Gear & Stance', type: 'value', negatable: true,
     human: "I have {value} equipped", humanNeg: "I don't have {value} equipped",
     options: ['Daggers','Swords','Maces','Axes','Staves','Polearms','Fist Weapons','Guns','Bows','Crossbows','Wands','Shields','Thrown'] },
