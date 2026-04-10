@@ -226,7 +226,7 @@ function renderAction(a, idx) {
   const renderCmdBtn = (c) => el('button', {
     class: 'option' + (a.command === c.cmd ? ' selected' : ''),
     title: c.cmd,
-    onclick: () => { a.command = c.cmd; renderWizard(); }
+    onclick: () => { a.command = c.cmd; if (!c.hasTarget) a.target = ''; renderWizard(); }
   }, c.human);
   commonCmds.forEach(c => cmdOpts.appendChild(renderCmdBtn(c)));
   const moreKey = 'cmd_' + idx;
@@ -263,20 +263,22 @@ function renderAction(a, idx) {
     block.appendChild(spellStep);
   }
 
-  // Step 3: Target
-  const commonTargets = TARGETS.slice(0, 5);
-  const moreTargets = TARGETS.slice(5);
-  const tgtOpts = el('div', { class: 'step-options' });
-  const renderTgtBtn = (t) => el('button', {
-    class: 'option' + (a.target === t.value ? ' selected' : ''),
-    title: t.syntax || t.value,
-    onclick: () => { a.target = t.value; renderWizard(); }
-  }, t.human);
-  commonTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
-  const moreKeyT = 'tgt_' + idx;
-  if (expandedMore[moreKeyT]) moreTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
-  else if (moreTargets.length) tgtOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKeyT] = true; renderWizard(); } }, 'more...'));
-  block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, cd && cd.hasSpell ? 'Cast it on' : 'Apply to'), tgtOpts));
+  // Step 3: Target (only for commands that act on a unit)
+  if (cd && cd.hasTarget) {
+    const commonTargets = TARGETS.slice(0, 5);
+    const moreTargets = TARGETS.slice(5);
+    const tgtOpts = el('div', { class: 'step-options' });
+    const renderTgtBtn = (t) => el('button', {
+      class: 'option' + (a.target === t.value ? ' selected' : ''),
+      title: t.syntax || t.value,
+      onclick: () => { a.target = t.value; renderWizard(); }
+    }, t.human);
+    commonTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
+    const moreKeyT = 'tgt_' + idx;
+    if (expandedMore[moreKeyT]) moreTargets.forEach(t => tgtOpts.appendChild(renderTgtBtn(t)));
+    else if (moreTargets.length) tgtOpts.appendChild(el('button', { class: 'more-toggle', onclick: () => { expandedMore[moreKeyT] = true; renderWizard(); } }, 'more...'));
+    block.appendChild(el('div', { class: 'step' }, el('span', { class: 'step-label' }, 'Cast it on'), tgtOpts));
+  }
 
   // Step 4: Conditions
   const condStep = el('div', { class: 'step' });
